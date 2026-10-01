@@ -9,8 +9,8 @@ CIDR_A=10.18.1.0/24          # подсеть в зоне A
 CIDR_B=10.18.2.0/24          # подсеть в зоне B
 APP_PORT=8024                # порт, на котором отвечает nginx
 GREETING=labwork             # слово из варианта, оно же на странице
-VM_COUNT=3                   # число машин в группе
-DISK_SIZE=10                 # дополнительный диск, ГБ — из варианта
+VM_COUNT="${1:-3}"
+DISK_SIZE="${2:-10}"                 # дополнительный диск, ГБ — из варианта
 BOOT_SIZE=20                 # загрузочный диск, ГБ — из варианта
 IMAGE_FAMILY=ubuntu-2404-lts # образ машин, одинаковый у всех вариантов
 echo "==> сеть и подсети"
@@ -25,12 +25,22 @@ SSH_KEY=$(cat ~/.ssh/id_ed25519.pub)
 export APP_PORT GREETING SSH_KEY
 envsubst '${APP_PORT} ${GREETING} ${SSH_KEY}' \
   < work-02/cloud-init.tpl.yaml > work-02/cloud-init.yaml
+
+echo "==> дополнительный диск"
+yc compute disk create --name "$PREFIX-data" --zone "$ZONE_A" \
+  --size "$DISK_SIZE" --type network-hdd
+
 echo "==> машины"
 ZONES=("$ZONE_A" "$ZONE_B")
 SUBNETS=("$PREFIX-subnet-a" "$PREFIX-subnet-b")
 
 for i in $(seq 1 "$VM_COUNT"); do
   idx=$(( (i - 1) % 2 ))
+  if [ "$i" -eq 1 ]; then
+    ATTACH_DISK=(--attach-disk disk-name="$PREFIX-data",device-name=data)
+  else
+    ATTACH_DISK=()
+  fi
   yc compute instance create \
     --name "$PREFIX-app-$i" \
     --zone "${ZONES[$idx]}" \
@@ -39,17 +49,10 @@ for i in $(seq 1 "$VM_COUNT"); do
     --preemptible \
     --create-boot-disk image-folder-id=standard-images,image-family="$IMAGE_FAMILY",type=network-hdd,size="$BOOT_SIZE" \
     --network-interface subnet-name="${SUBNETS[$idx]}",nat-ip-version=ipv4 \
+    "${ATTACH_DISK[@]}" \
     --hostname "$PREFIX-app-$i" \
     --metadata-from-file user-data=work-02/cloud-init.yaml
 done
-echo "==> дополнительный диск"
-yc compute disk create --name "$PREFIX-data" --zone "$ZONE_A" \
-  --size "$DISK_SIZE" --type network-hdd
-
-yc compute instance attach-disk "$PREFIX-app-1" \
-  --disk-name "$PREFIX-data" \
-  --device-name data \
-  --auto-delete=false
 echo "==> целевая группа"
 
 # собираем список машин: имя подсети и внутренний адрес каждой
