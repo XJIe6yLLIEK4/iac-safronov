@@ -46,7 +46,14 @@ else
   STATUS=1
 fi
 
-APP_CODE=$(curl -s --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' "http://$LB_IP/app-health" || true)
+APP_IP=$(yc compute instance get "$PREFIX-app" --format json \
+  | jq -r '.network_interfaces[0].primary_v4_address.address')
+WEB_IP=$(yc compute instance get "$PREFIX-web-1" --format json \
+  | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
+APP_CODE=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new \
+  student@"$WEB_IP" \
+  "curl -s --connect-timeout 3 --max-time 5 -o /dev/null -w '%{http_code}' http://$APP_IP:$APP_PORT" \
+  2>/dev/null || true)
 
 if [[ "$APP_CODE" == "200" ]]; then
   echo "✓ сервер приложения доступен с $PREFIX-web-1"
